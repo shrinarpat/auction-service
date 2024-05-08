@@ -1,0 +1,110 @@
+service: auction-service-project
+
+plugins:
+  - serverless-bundle
+  - serverless-pseudo-parameters
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  memorySize: 256
+  stage: ${opt:stage, 'dev'}
+  region: ap-south-1
+  environment:
+    MAIL_QUEUE_URL: ${self:custom.MailQueue.url}
+    AUCTIONS_BUCKET_NAME: ${self:custom.AuctionsBucket.name}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:PutItem
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:UpdateItem
+        - dynamodb:Query
+        - sqs:SendMessage
+        - s3:PutObject
+      Resource: 
+        - arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/AuctionsTable
+        - arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/AuctionsTable/index/statusAndEndDate
+        - ${self:custom.MailQueue.arn}
+        - arn:aws:s3:::${self:custom.AuctionsBucket.name}/*
+
+resources:
+  Resources:
+    AuctionsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: AuctionsTable
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S 
+          - AttributeName: status
+            AttributeType: S 
+          - AttributeName: endingAt 
+            AttributeType: S 
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        GlobalSecondaryIndexes: 
+          - IndexName: statusAndEndDate
+            KeySchema:
+              - AttributeName: status
+                KeyType: HASH
+              - AttributeName: endingAt 
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+    AuctionsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: auctions-bucket-narpat-dev
+        LifecycleConfiguration:
+          Rules:
+            - Id: ExpirePictures
+              Status: Enabled
+              ExpirationInDays: 1
+functions:
+  createAuction:
+    handler: src/handlers/createAuction.handler
+    events:
+      - http:
+          method: POST
+          path: /auction
+  getAuctions:
+    handler: src/handlers/getAuctions.handler
+    events:
+      - http:
+          method: GET
+          path: /auctions
+  getAuction:
+    handler: src/handlers/getAuction.handler
+    events:
+      - http:
+          method: GET
+          path: /auction/{id}
+  placeBid:
+    handler: src/handlers/placeBid.handler
+    events:
+      - http:
+          method: PATCH
+          path: /auction/{id}/bid
+  processBid:
+    handler: src/handlers/processBid.handler
+    # events:
+    #   - schedule: rate(1 minute)
+  uploadAuctionPicture:
+    handler: src/handlers/uploadAuctionPicture.handler
+    events:
+      - http:
+          method: PATCH
+          path: /auction/{id}/picture
+
+custom:
+  MailQueue:
+    arn: ${cf:notification-service-${self:provider.stage}.MailQueueArn}
+    url: ${cf:notification-service-${self:provider.stage}.MailQueueUrl}
+  AuctionsBucket:
+    name: auctions-bucket-narpat-${self:provider.stage}
+
+
